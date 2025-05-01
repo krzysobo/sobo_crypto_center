@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) !void {
     const capy_dep = b.dependency("capy", .{
         .target = target,
         .optimize = optimize,
-        .app_name = @as([]const u8, "capy-template"),
+        .app_name = @as([]const u8, "sobo-crypto-center"),
     });
     const capy = capy_dep.module("capy");
 

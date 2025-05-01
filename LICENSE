@@ -1,7 +1,7 @@
-MIT License
+2025 krzysobo/cubes_anew fork Copyright (c) 2025 Krzysztof Sobolewki <krzysztof.sobolewski@gmail.com>, https://github.com/krzysobo based on the work by Stefan Urbanek.
 
-Copyright (c) 2025 Krzysztof Sobolewski
-created using the unlicensed (public domain) template https://github.com/capy-ui/zig-template
+Copyright (c) 2025 Krzysztof Sobolewski <krzysztof.sobolewski@gmail.com> https://github.com/krzysobo
+some portions of src/hexed.zig are taken from Ziglang std library (hexToBytes and bytesToHex) also MIT-licensed, and improved.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -12,6 +12,10 @@ furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
+
+If your version of the Software supports interaction with it remotely through
+a computer network, the above copyright notice and this permission notice
+shall be accessible to all users.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
