@@ -1,21 +1,10 @@
-# capy-template
-Simple template for a Capy app
+# Sobo Crypto Center
 
-**Target Zig Version: zig `0.13.0` / ([2024.5.0-mach](https://machengine.org/about/nominated-zig/))**
+The goal of this project is to create a set of Crypto tools that are easy to use for the average user and allow both encryption and decryption of any content offline, using both CLI and GUI, at the user's choice.
 
-## Building
-If you wish to run the app simply execute
-```sh
-zig build run
-```
-
-In the same way, to build and run the app for WebAssembly, execute
-```sh
-zig build serve
-```
-
-## Updating Capy
-To update Capy, run the following command in your terminal:
-```sh
-zig fetch --save=capy git+https://github.com/capy-ui/capy
-```
+## TODO
+- more encryption algorithms, including hybrid and asymmetric, allowing the use of key pairs
+- more features for CLI
+- GUI (DVUI? Caps? LVGL? Something else? Decision not made yet.)
+- SQLite integration allowing storage of encrypted content
+- ... many other things
