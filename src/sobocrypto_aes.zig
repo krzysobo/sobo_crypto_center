@@ -1,8 +1,12 @@
 const std = @import("std");
 const hexed = @import("hexed.zig");
 
-const PortableKeySuite = struct {
-    const sep_size_bytes : comptime_int= 5;    // 'W' + key + 'Q' + tag + 'Q' + nonce + 'Q' + aad + 'W'
+pub const PortableKeySuite = struct {
+    pub const sep_size_bytes : comptime_int= 5;    // 'W' + key + 'Q' + tag + 'Q' + nonce + 'Q' + aad + 'W'
+    pub const key_size_bytes: comptime_int = 32;
+    pub const nonce_size_bytes: comptime_int = 12;
+
+
 
     // port_buf_out: [] u8, 
     key_buf_in: []const u8,
@@ -24,7 +28,7 @@ const PortableKeySuite = struct {
         };
     }
 
-    pub fn getHexStringSize(self: PortableKeySuite) usize {
+    pub fn getHexStringSize(self: *PortableKeySuite) usize {
         return self.key_buf_in.len * 2 + 
             self.tag_buf_in.len * 2 + 
             self.nonce_buf_in.len * 2 + 
@@ -32,8 +36,9 @@ const PortableKeySuite = struct {
             PortableKeySuite.sep_size_bytes;
     }
 
+
     // 'W' + key_buf_hex + 'Q' + tag_buf_hex + 'Q' + nonce_buf_hex + 'Q' + aad_buf_hex + 'W'
-    pub fn getHexString(buf_out: []u8, self: PortableKeySuite) !void {
+    pub fn getHexString(self: *PortableKeySuite, buf_out: []u8) !void {
         return makePortableKeySuite(buf_out, 
             self.key_buf_in, 
             self.tag_buf_in, 
@@ -130,7 +135,7 @@ pub fn aesGcmDecrypt(
         input_ciphertext: []const u8, 
         input_cipher_key: []const u8, 
         input_aes_gcm_tag: [16]u8, 
-        input_nonce: []u8, 
+        input_nonce: []const u8, 
         aad_text: []const u8, 
         nonce_size_bytes: comptime_int, 
         cipher_key_size_bytes: comptime_int) !void {
@@ -141,6 +146,36 @@ pub fn aesGcmDecrypt(
     return std.crypto.aead.aes_gcm.Aes256Gcm.decrypt(output_plain_text, input_ciphertext, 
         input_aes_gcm_tag, aad_text, nonce_out, cipher_key_out);
 }
+
+
+pub fn aesGcmdecryptFromHex(decrypted_text: []u8, ciphertext_hex: []u8, hex_key_suite: []u8) !void {
+    const key_size_bytes: comptime_int = PortableKeySuite.key_size_bytes;
+    const nonce_size_bytes: comptime_int = PortableKeySuite.nonce_size_bytes;
+
+    if (ciphertext_hex.len % 2 != 0) {
+        return error.InvalidCiphertextLength;
+    }
+
+    const allocator = std.heap.page_allocator;
+    const ciphertext_bytes = try allocator.alloc(u8, ciphertext_hex.len / 2);
+    _ = try hexed.hexToBytes(ciphertext_bytes, ciphertext_hex);
+
+    const pks_struct = try PortableKeySuite.initFromHexString(hex_key_suite);
+    const tag_buf_out: [16]u8 = pks_struct.tag_buf_in[0..16].*;
+
+    return aesGcmDecrypt(
+        decrypted_text, 
+        ciphertext_bytes, 
+        pks_struct.key_buf_in, 
+        tag_buf_out, 
+        pks_struct.nonce_buf_in, 
+        pks_struct.aad_buf_in, 
+        nonce_size_bytes, 
+        key_size_bytes);
+
+}
+
+
 
 // makes a random key and returns it via parameter
 pub fn makeRandomKey(key_buf: []u8, comptime key_length_bytes: comptime_int) !void {
@@ -289,18 +324,18 @@ test "encryption and decryption process" {
     try makePortableKeySuite(pks, buf_key_2, &aes_gcm_tag, nonce_2, aad_text, sep_size_bytes);
 
 
-    const pks_struct = PortableKeySuite.init(buf_key_2, &aes_gcm_tag, nonce_2, aad_text);
+    var pks_struct = PortableKeySuite.init(buf_key_2, &aes_gcm_tag, nonce_2, aad_text);
 
     // const pks_2 = try allocator.alloc(u8, buf_key_2.len * 2 + aes_gcm_tag.len * 2 + nonce_2.len * 2 + aad_text.len * 2 + sep_size_bytes);
 
-    const size_pks_2 = PortableKeySuite.getHexStringSize(pks_struct);
-    
+    const size_pks_2 = pks_struct.getHexStringSize();
+
     try std.testing.expectEqual(pks.len, size_pks_2);
 
     const pks_2 = try allocator.alloc(u8, size_pks_2);
     defer allocator.free(pks_2);
 
-    try PortableKeySuite.getHexString(pks_2, pks_struct);
+    try pks_struct.getHexString(pks_2);
 
     std.debug.print("\nPortable Key Suite: {s}\n", .{pks});
     std.debug.print("\nPortable Key Suite FROM STRUCT: {s}\n", .{pks_2});
@@ -313,17 +348,17 @@ test "encryption and decryption process" {
     try std.testing.expectStringStartsWith(pks_2, "W");
     try std.testing.expectStringEndsWith(pks_2,"W");
 
-    const pks_struct_from_hex = try PortableKeySuite.initFromHexString(pks_2);
+    var pks_struct_from_hex = try PortableKeySuite.initFromHexString(pks_2);
 
     // _ = pks_struct_from_hex;
 
-    const size_pks_from_hex = PortableKeySuite.getHexStringSize(pks_struct_from_hex);
+    const size_pks_from_hex = pks_struct_from_hex.getHexStringSize();
     try std.testing.expectEqual(pks.len, size_pks_from_hex);
 
     const pks_from_hex = try allocator.alloc(u8, size_pks_from_hex);
     defer allocator.free(pks_from_hex);
 
-    try PortableKeySuite.getHexString(pks_from_hex, pks_struct_from_hex);
+    try pks_struct_from_hex.getHexString(pks_from_hex);
 
     try std.testing.expect(std.mem.eql(u8, pks_from_hex, pks));
     try std.testing.expect(std.mem.eql(u8, pks_from_hex, pks_2));
