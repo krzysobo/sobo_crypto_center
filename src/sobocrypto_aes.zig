@@ -5,8 +5,10 @@ pub const PortableKeySuite = struct {
     pub const sep_size_bytes : comptime_int= 5;    // 'W' + key + 'Q' + tag + 'Q' + nonce + 'Q' + aad + 'W'
     pub const key_size_bytes: comptime_int = 32;
     pub const nonce_size_bytes: comptime_int = 12;
+    pub const tag_size_bytes: comptime_int = 16;    
 
-
+    pub const aad_text = "Dolor sit amet.";  // additional text for authentication; for now, it's a constant text
+   
 
     // port_buf_out: [] u8, 
     key_buf_in: []const u8,
@@ -26,6 +28,15 @@ pub const PortableKeySuite = struct {
             .nonce_buf_in = nonce_buf_in,
             .aad_buf_in   = aad_buf_in,
         };
+    }
+
+    pub fn getHexStringKeySizeConst() usize {
+        return PortableKeySuite.sep_size_bytes + (
+                PortableKeySuite.key_size_bytes + 
+                PortableKeySuite.nonce_size_bytes + 
+                PortableKeySuite.tag_size_bytes + 
+                PortableKeySuite.aad_text.len
+            ) * 2;
     }
 
     pub fn getHexStringSize(self: *PortableKeySuite) usize {
@@ -148,32 +159,8 @@ pub fn aesGcmDecrypt(
 }
 
 
-pub fn aesGcmdecryptFromHex(decrypted_text: []u8, ciphertext_hex: []u8, hex_key_suite: []u8) !void {
-    const key_size_bytes: comptime_int = PortableKeySuite.key_size_bytes;
-    const nonce_size_bytes: comptime_int = PortableKeySuite.nonce_size_bytes;
 
-    if (ciphertext_hex.len % 2 != 0) {
-        return error.InvalidCiphertextLength;
-    }
 
-    const allocator = std.heap.page_allocator;
-    const ciphertext_bytes = try allocator.alloc(u8, ciphertext_hex.len / 2);
-    _ = try hexed.hexToBytes(ciphertext_bytes, ciphertext_hex);
-
-    const pks_struct = try PortableKeySuite.initFromHexString(hex_key_suite);
-    const tag_buf_out: [16]u8 = pks_struct.tag_buf_in[0..16].*;
-
-    return aesGcmDecrypt(
-        decrypted_text, 
-        ciphertext_bytes, 
-        pks_struct.key_buf_in, 
-        tag_buf_out, 
-        pks_struct.nonce_buf_in, 
-        pks_struct.aad_buf_in, 
-        nonce_size_bytes, 
-        key_size_bytes);
-
-}
 
 
 
@@ -224,10 +211,70 @@ pub fn makePortableKeySuite(
         "W{s}Q{s}Q{s}Q{s}W", 
         .{key_buf_hex, tag_buf_hex, nonce_buf_hex, aad_buf_hex});
 
-    // std.debug.print("PKS: {s}\n--KEY BUF HEX: {s}\n--TAG BUF HEX: {s}\n--NONCE BUF HEX: {s}\n--AAD_BUF_HEX: {s}\n\n", 
-    // .{port_buf_out, key_buf_hex, tag_buf_hex, nonce_buf_hex, aad_buf_hex});
+    std.debug.print("PKS: {s}\n--KEY BUF HEX: {s}\n--TAG BUF HEX: {s}\n--NONCE BUF HEX: {s}\n--AAD_BUF_HEX: {s}\n\n", 
+    .{port_buf_out, key_buf_hex, tag_buf_hex, nonce_buf_hex, aad_buf_hex});
 
 }
+
+
+// ======================================== HEX interface =======================================================
+pub fn aesGcmDecryptFromHex(decrypted_text: []u8, ciphertext_hex: []u8, hex_key_suite: []u8) !void {
+    const key_size_bytes: comptime_int = PortableKeySuite.key_size_bytes;
+    const nonce_size_bytes: comptime_int = PortableKeySuite.nonce_size_bytes;
+
+    if (ciphertext_hex.len % 2 != 0) {
+        return error.InvalidCiphertextLength;
+    }
+
+    const allocator = std.heap.page_allocator;
+    const ciphertext_bytes = try allocator.alloc(u8, ciphertext_hex.len / 2);
+    _ = try hexed.hexToBytes(ciphertext_bytes, ciphertext_hex);
+
+    const pks_struct = try PortableKeySuite.initFromHexString(hex_key_suite);
+    const tag_buf_out: [16]u8 = pks_struct.tag_buf_in[0..16].*;
+
+    return aesGcmDecrypt(
+        decrypted_text, 
+        ciphertext_bytes, 
+        pks_struct.key_buf_in, 
+        tag_buf_out, 
+        pks_struct.nonce_buf_in, 
+        pks_struct.aad_buf_in, 
+        nonce_size_bytes, 
+        key_size_bytes);
+
+}
+
+
+fn aesGcmEncryptToHex(output_ciphertext_hex: []u8, output_keysuite: []u8, in_plain_text: []u8) !void {
+    const allocator = std.heap.page_allocator;
+    const key_size_bytes: comptime_int = PortableKeySuite.key_size_bytes;
+    const nonce_size_bytes: comptime_int = PortableKeySuite.nonce_size_bytes;
+
+    const buf_key = try allocator.alloc(u8, key_size_bytes);
+    const nonce: []u8 = try allocator.alloc(u8, nonce_size_bytes);        
+    const buf_ciphertext: []u8 = try allocator.alloc(u8, in_plain_text.len);
+
+    defer allocator.free(nonce);
+    defer allocator.free(buf_key);
+    defer allocator.free(buf_ciphertext);
+    
+    try makeRandomKey(buf_key, key_size_bytes);
+    try makeNonce(nonce, nonce_size_bytes);
+
+    const aad_text = PortableKeySuite.aad_text;  // additional text for authentication
+    var aes_gcm_tag: [16]u8 = undefined; // GCM tag
+
+    try aesGcmEncrypt(buf_ciphertext, &aes_gcm_tag, 
+        in_plain_text, buf_key, nonce, aad_text, nonce_size_bytes, key_size_bytes);
+
+    var pks = PortableKeySuite.init(buf_key, &aes_gcm_tag, nonce, aad_text);
+    try pks.getHexString(output_keysuite);
+
+    try hexed.bytesToHex(output_ciphertext_hex, buf_ciphertext, std.fmt.Case.upper);
+}
+// ======================================== /HEX interface =======================================================
+
 // ======================================= tests =====================================
 
 test makeRandomKey {
@@ -286,7 +333,7 @@ test "encryption and decryption process" {
 
     const plain_text = "This is the original message to be encrypted. Lorem ipsum";
     std.debug.print("\nORIGINAL NONCE 2 {s}\n", .{std.fmt.fmtSliceHexUpper(nonce_2)});
-    const aad_text = "dolor sit amet...";
+    const aad_text = PortableKeySuite.aad_text;
     var aes_gcm_tag: [16]u8 = undefined; // GCM tag
 
     const encrypted_text = try allocator.alloc(u8, plain_text.len);
@@ -328,14 +375,18 @@ test "encryption and decryption process" {
 
     // const pks_2 = try allocator.alloc(u8, buf_key_2.len * 2 + aes_gcm_tag.len * 2 + nonce_2.len * 2 + aad_text.len * 2 + sep_size_bytes);
 
-    const size_pks_2 = pks_struct.getHexStringSize();
-
-    try std.testing.expectEqual(pks.len, size_pks_2);
-
+    const size_pks_2 = PortableKeySuite.getHexStringKeySizeConst();
     const pks_2 = try allocator.alloc(u8, size_pks_2);
     defer allocator.free(pks_2);
 
     try pks_struct.getHexString(pks_2);
+
+    std.debug.print("\n\nSIZE PKS: {} SIZE PKS_2: {}\n\n", .{pks.len, size_pks_2});
+    std.debug.print("\n\nCONTENT PKS: {s}\nCONTENT PKS_2: {s}\n\n", .{pks, pks_2});
+
+    try std.testing.expectEqual(pks.len, size_pks_2);
+    try std.testing.expectEqual(pks_2.len, size_pks_2);
+
 
     std.debug.print("\nPortable Key Suite: {s}\n", .{pks});
     std.debug.print("\nPortable Key Suite FROM STRUCT: {s}\n", .{pks_2});
@@ -352,7 +403,7 @@ test "encryption and decryption process" {
 
     // _ = pks_struct_from_hex;
 
-    const size_pks_from_hex = pks_struct_from_hex.getHexStringSize();
+    const size_pks_from_hex = PortableKeySuite.getHexStringKeySizeConst();
     try std.testing.expectEqual(pks.len, size_pks_from_hex);
 
     const pks_from_hex = try allocator.alloc(u8, size_pks_from_hex);
