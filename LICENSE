@@ -1,4 +1,4 @@
-2025 krzysobo/cubes_anew fork Copyright (c) 2025 Krzysztof Sobolewki <krzysztof.sobolewski@gmail.com>, https://github.com/krzysobo based on the work by Stefan Urbanek.
+Copyright (c) 2025 Krzysztof Sobolewki <krzysztof.sobolewski@gmail.com>
 
 Copyright (c) 2025 Krzysztof Sobolewski <krzysztof.sobolewski@gmail.com> https://github.com/krzysobo
 some portions of src/hexed.zig are taken from Ziglang std library (hexToBytes and bytesToHex) also MIT-licensed, and improved.
