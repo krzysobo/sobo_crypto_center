@@ -4,9 +4,10 @@
 
 const std = @import("std");
 const sobocrypto_aes = @import("sobocrypto_aes.zig");
+
 const hexed = @import("hexed.zig");
 const cmds = @import("main_cmds.zig");
-const version = "0.0.2";
+const version = "0.0.3";
 
 fn showBasicInfo() !void {
     std.debug.print(

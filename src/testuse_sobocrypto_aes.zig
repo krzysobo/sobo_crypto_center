@@ -48,8 +48,6 @@ pub fn main() !void {
         buf_key_2,
         nonce_2,
         aad_text,
-        nonce_size_bytes,
-        key_size_bytes,
     );
 
     try sobocrypto_aes.aesGcmDecrypt(
@@ -59,8 +57,6 @@ pub fn main() !void {
         aes_gcm_tag,
         nonce_2,
         aad_text,
-        nonce_size_bytes,
-        key_size_bytes,
     );
 
     std.debug.print("\n====> encrypted text: {any}\n--> ENC. TEXT HEX:{s}\nTAG: {any}\n-->TAG HASH: {s} \n\n", .{

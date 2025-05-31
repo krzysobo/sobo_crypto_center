@@ -7,35 +7,75 @@ The goal of this project is to create a set of Crypto tools that are easy to use
 
 ### Encryption (AES-GCM):
 ```
-    zig run main.zig -- enc "Hello World, blah blah blah. Let's encrypt everything"
-
-    ... Starting encryption of text:
-    'Hello World, blah blah blah. Let's encrypt everything'
-    ...
-    ENCRYPTED TEXT:
-    B8E8B2F54C6445CFC2DBD3E39E5027DA607590A2F574B9D5963B53FEA74DD59665111C6E16A4D65A1EBB840FFACB05788E8FA79175
-    Portable Key Suite:
-    W554E87089793F0DE07291CC3B65FC6581DFD8732B4438932A16DF81AB8636BC5QB50C501D18FE8517D5A81AF8F40F0C50Q3976684D5A0F0E1BBD8BEE3FQ446F6C6F722073697420616D65742EW
+zig run main.zig -- enc "Today I saw, how the quick brown fox jumped over the lazy dog."
+=========================================================================================================
+                              *** Sobo Crypto Center v 0.0.3 ***                                      
+  Copyright (c) 2025 Krzysztof Sobolewski <krzysztof.sobolewski@gmail.com> https://github.com/krzysobo
+  Repo location: https://github.com/krzysobo/sobo_crypto_center/
+  License: MIT  see: https://github.com/krzysobo/sobo_crypto_center/blob/main/LICENSE
+=========================================================================================================
+... Starting AES-GCM encryption of text:
+'Today I saw, how the quick brown fox jumped over the lazy dog.'
+...
+ENCRYPTED DATA:
+S2E7E47E9B5AE945F5C205920D65CDCB1414A9B8F8594B79BF6BF159C6DDFF23B848B8D0A94300F274F4BB407A5D0C086F46EBBDCA7F03B9DE7CD6586C530H71157E894F497AD410297FECB13F919EH616C666120626574612067616D6D61H7DB51C659F49FAA52883CDC1D4CA6E47D30D81BF84FE55544B924FAF3B372184HA2EEA1EE8E249C62426930EFS
+AES KEY:
+D986BB50A5D7049ADF5162F6B5EE263EE23CB490BBA84E316A67509664427517
 ```
 
-AES-GCM from the standard crypto library (std.crypto) of Zig 0.14.0 with both key, tag, nonce and additional verification text contained in "Portable Key Suite", separated by "Q" characters. The Portable Key Suite starts and ends  with "W". Neither of those letters (W or Q) ever appear in hex, so their use makes the structure unambigous.
+The data is being encrypted with AES-GCM. The encrypted data is a structure starting end ending with "S". Betweenn those boundaries is a set of pure hex values separated with "H", namely:
+- ciphertext hex 
+- AES tag hex
+- AD text hex 
+- salt_hex
+- nonce_hex
 
 
 ### Decryption (AES-GCM):
-with both key, tag, nonce and additional verification text contained in "Portable Key Suite", separated by "Q" characters. The Portable Key Suite starts and ends  with "W". Neither of those letters (W or Q) ever appear in hex, so their use makes the structure unambigous.
-
-
+To decrypt the data from the above example, we call the following:
 ```
-    zig run main.zig -- dec "B8E8B2F54C6445CFC2DBD3E39E5027DA607590A2F574B9D5963B53FEA74DD59665111C6E16A4D65A1EBB840FFACB05788E8FA79175" "W554E87089793F0DE07291CC3B65FC6581DFD8732B4438932A16DF81AB8636BC5QB50C501D18FE8517D5A81AF8F40F0C50Q3976684D5A0F0E1BBD8BEE3FQ446F6C6F722073697420616D65742EW"
+    zig run main.zig -- dec "S2E7E47E9B5AE945F5C205920D65CDCB1414A9B8F8594B79BF6BF159C6DDFF23B848B8D0A94300F274F4BB407A5D0C086F46EBBDCA7F03B9DE7CD6586C530H71157E894F497AD410297FECB13F919EH616C666120626574612067616D6D61H7DB51C659F49FAA52883CDC1D4CA6E47D30D81BF84FE55544B924FAF3B372184HA2EEA1EE8E249C62426930EFS" "D986BB50A5D7049ADF5162F6B5EE263EE23CB490BBA84E316A67509664427517"
+        =========================================================================================================
+                                    *** Sobo Crypto Center v 0.0.3 ***                                      
+        Copyright (c) 2025 Krzysztof Sobolewski <krzysztof.sobolewski@gmail.com> https://github.com/krzysobo
+        Repo location: https://github.com/krzysobo/sobo_crypto_center/
+        License: MIT  see: https://github.com/krzysobo/sobo_crypto_center/blob/main/LICENSE
+        =========================================================================================================
+        ... Starting decryption of ciphertext:
+        'S2E7E47E9B5AE945F5C205920D65CDCB1414A9B8F8594B79BF6BF159C6DDFF23B848B8D0A94300F274F4BB407A5D0C086F46EBBDCA7F03B9DE7CD6586C530H71157E894F497AD410297FECB13F919EH616C666120626574612067616D6D61H7DB51C659F49FAA52883CDC1D4CA6E47D30D81BF84FE55544B924FAF3B372184HA2EEA1EE8E249C62426930EFS'
+        with hex_key:
+        'D986BB50A5D7049ADF5162F6B5EE263EE23CB490BBA84E316A67509664427517'
+        ...
+        Decrypted text:
+        Today I saw, how the quick brown fox jumped over the lazy dog.
 
-    ... Starting decryption of ciphertext:
-    'B8E8B2F54C6445CFC2DBD3E39E5027DA607590A2F574B9D5963B53FEA74DD59665111C6E16A4D65A1EBB840FFACB05788E8FA79175'
-    with hex_key_suite:
-    'W554E87089793F0DE07291CC3B65FC6581DFD8732B4438932A16DF81AB8636BC5QB50C501D18FE8517D5A81AF8F40F0C50Q3976684D5A0F0E1BBD8BEE3FQ446F6C6F722073697420616D65742EW'
-    ...
-    Decrypted text:
-    Hello World, blah blah blah. Let's encrypt everything
+        ========================================
 ```
+
+- of course, instead of calling ```zig run main.zig``` you should compile the project: it will be many times
+faster! Using ```zig run xxxx.zig``` is good only for testing, since it compiles the project each time. To use the compiled version:
+- do compile it first :) with ```zig build``` in the main src directory or one up.
+- go to the directory ```zig-out/bin```, which is located one level above ```src```.
+- call ./sobo-crypto-center with the parameters as above, only omitting the ```--```, ie.
+```
+    ./sobo_crypto_center dec "S2E7E47E9B5AE945F5C205920D65CDCB1414A9B8F8594B79BF6BF159C6DDFF23B848B8D0A94300F274F4BB407A5D0C086F46EBBDCA7F03B9DE7CD6586C530H71157E894F497AD410297FECB13F919EH616C666120626574612067616D6D61H7DB51C659F49FAA52883CDC1D4CA6E47D30D81BF84FE55544B924FAF3B372184HA2EEA1EE8E249C62426930EFS" "D986BB50A5D7049ADF5162F6B5EE263EE23CB490BBA84E316A67509664427517"
+        =========================================================================================================
+                                    *** Sobo Crypto Center v 0.0.3 ***                                      
+        Copyright (c) 2025 Krzysztof Sobolewski <krzysztof.sobolewski@gmail.com> https://github.com/krzysobo
+        Repo location: https://github.com/krzysobo/sobo_crypto_center/
+        License: MIT  see: https://github.com/krzysobo/sobo_crypto_center/blob/main/LICENSE
+        =========================================================================================================
+        ... Starting decryption of ciphertext:
+        'S2E7E47E9B5AE945F5C205920D65CDCB1414A9B8F8594B79BF6BF159C6DDFF23B848B8D0A94300F274F4BB407A5D0C086F46EBBDCA7F03B9DE7CD6586C530H71157E894F497AD410297FECB13F919EH616C666120626574612067616D6D61H7DB51C659F49FAA52883CDC1D4CA6E47D30D81BF84FE55544B924FAF3B372184HA2EEA1EE8E249C62426930EFS'
+        with hex_key:
+        'D986BB50A5D7049ADF5162F6B5EE263EE23CB490BBA84E316A67509664427517'
+        ...
+        Decrypted text:
+        Today I saw, how the quick brown fox jumped over the lazy dog.
+
+        ========================================
+```
+
 
 ## A sample use - Diffie-Hellman's
 - This algorithm:

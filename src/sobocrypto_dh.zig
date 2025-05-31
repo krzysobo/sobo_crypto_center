@@ -13,6 +13,8 @@ const X25519 = std.crypto.dh.X25519;
 const DhKeyPair = X25519.KeyPair;
 const SizesAesGcm = sobocrypto_aes.SizesAesGcm;
 
+const default_aad_text = "alfa beta gamma";
+
 // ------ structs and other data definitions -------
 pub const SizesDh = struct {
     // Diffie-Hellman's (DH)
@@ -40,6 +42,7 @@ pub const EncryptedData = struct {
         const cipher_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.ciphertext, std.fmt.Case.upper, allocator);
         const tag_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.tag, std.fmt.Case.upper, allocator);
         const salt_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.salt, std.fmt.Case.upper, allocator);
+        const aad_text_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.aad_text, std.fmt.Case.upper, allocator);
         const nonce_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.nonce, std.fmt.Case.upper, allocator);
 
         // DH
@@ -56,6 +59,8 @@ pub const EncryptedData = struct {
         try xargs.append('H');
         try xargs.appendSlice(tag_hex);
         try xargs.append('H');
+        try xargs.appendSlice(aad_text_hex);
+        try xargs.append('H');
         try xargs.appendSlice(salt_hex);
         try xargs.append('H');
         try xargs.appendSlice(nonce_hex);
@@ -64,7 +69,7 @@ pub const EncryptedData = struct {
 
         if (add_next_public_key) {
             try xargs.append('H');
-            try xargs.appendSlice(self.our_next_public_key ++ "DUPA");
+            try xargs.appendSlice(&self.our_next_public_key);
         }
         try xargs.append('W');
 
@@ -98,7 +103,7 @@ pub const EncryptedData = struct {
             i += 1;
         }
 
-        if ((xargs.items.len != 5) and (xargs.items.len != 6)) {
+        if ((xargs.items.len != 6) and (xargs.items.len != 7)) {
             return error.InvalidDhEncryptedDataHexFormat;
         }
 
@@ -109,14 +114,15 @@ pub const EncryptedData = struct {
             .aes_enc_data = .{
                 .ciphertext = xargs.items[0][0..xargs.items[0].len],
                 .tag = xargs.items[1][0..SizesAesGcm.aes_tag].*,
-                .salt = xargs.items[2][0..SizesAesGcm.salt].*,
-                .nonce = xargs.items[3][0..SizesAesGcm.nonce].*,
+                .aad_text = xargs.items[2],
+                .salt = xargs.items[3][0..SizesAesGcm.salt].*,
+                .nonce = xargs.items[4][0..SizesAesGcm.nonce].*,
             },
 
             // DH
-            .our_public_key = xargs.items[4][0..SizesDh.dh_public_key].*,
-            .our_next_public_key = if (xargs.items.len == 6)
-                xargs.items[5][0..SizesDh.dh_public_key].*
+            .our_public_key = xargs.items[5][0..SizesDh.dh_public_key].*,
+            .our_next_public_key = if (xargs.items.len == 7)
+                xargs.items[6][0..SizesDh.dh_public_key].*
             else
                 undefined,
         };
@@ -146,6 +152,7 @@ pub fn encryptDh(
         our_shs,
         our_public_key,
         our_public_key,
+        default_aad_text,
         allocator,
     );
 
@@ -186,38 +193,24 @@ fn encryptUsingSharedSecret(
     shared_secret: [SizesDh.dh_shared_secret]u8,
     our_public_key: [SizesDh.dh_public_key]u8,
     our_next_public_key: [SizesDh.dh_public_key]u8,
+    aad_text: []const u8,
     allocator: std.mem.Allocator,
 ) !EncryptedData {
     const salt: [SizesAesGcm.salt]u8 = try makeSalt(SizesAesGcm.salt);
     const nonce: [SizesAesGcm.nonce]u8 = try makeNonce(SizesAesGcm.nonce);
-    const output_ciphertext = try allocator.alloc(u8, plaintext.len);
-    var output_aes_gcm_tag: [16]u8 = undefined;
+    const aes_key: [SizesAesGcm.aes_key]u8 = try makeAesKeyFromSharedSecret(shared_secret, salt);
 
-    // _ = shared_secret;
-    const aes_key = try makeAesKeyFromSharedSecret(shared_secret, salt);
-
-    // std.debug.print("\n=== ENCRYPT - AES KEY: '{s}'\n\n", .{std.fmt.fmtSliceHexUpper(&aes_key)});
-    // std.debug.print("\n=== ENCRYPT - SHARED SECRET: '{s}'\n\n", .{std.fmt.fmtSliceHexUpper(&shared_secret)});
-
-    try sobocrypto_aes.aesGcmEncrypt(
-        output_ciphertext,
-        &output_aes_gcm_tag,
+    const aes_enc_data = try sobocrypto_aes.aesGcmEncryptToStruct(
         plaintext,
-        &aes_key,
-        &nonce,
-        "alfa beta gamma",
-        SizesAesGcm.nonce,
-        SizesAesGcm.aes_key,
+        aes_key,
+        nonce,
+        aad_text,
+        salt,
+        allocator,
     );
 
     return .{
-        .aes_enc_data = .{
-            .salt = salt,
-            .nonce = nonce,
-            .ciphertext = output_ciphertext,
-            .tag = output_aes_gcm_tag,
-        },
-
+        .aes_enc_data = aes_enc_data,
         .our_public_key = our_public_key,
         .our_next_public_key = our_next_public_key,
     };
@@ -233,16 +226,10 @@ fn decryptUsingSharedSecret(
         enc_data.aes_enc_data.salt,
     );
 
-    const output_plain_text: []u8 = try allocator.alloc(u8, enc_data.aes_enc_data.ciphertext.len);
-    try sobocrypto_aes.aesGcmDecrypt(
-        output_plain_text,
-        enc_data.aes_enc_data.ciphertext,
+    const output_plain_text = try sobocrypto_aes.aesGcmDecryptFromStruct(
+        enc_data.aes_enc_data,
         &aes_key,
-        enc_data.aes_enc_data.tag,
-        &enc_data.aes_enc_data.nonce,
-        "alfa beta gamma",
-        SizesAesGcm.nonce,
-        SizesAesGcm.aes_key,
+        allocator,
     );
 
     return output_plain_text;
@@ -271,7 +258,78 @@ fn makeSharedSecret(
 
 // ============================== tests ====================================
 
+test "Bob and Alice can speak freely" {
+    const allocator = std.heap.page_allocator;
+
+    const kp = try makeKeyPair();
+    const th = try makeKeyPair();
+    const our_shs = try makeSharedSecret(kp.secret_key, th.public_key);
+    const their_shs = try makeSharedSecret(th.secret_key, kp.public_key);
+
+    std.debug.print("\nBob and Alice can speak freely:: Bob's (OUR) SHARED SECRET: {s}\n\n", .{std.fmt.fmtSliceHexUpper(&our_shs)});
+    std.debug.print("\nBob and Alice can speak freely:: Alice's (THEIR) SHARED SECRET: {s}\n\n", .{std.fmt.fmtSliceHexUpper(&their_shs)});
+
+    try std.testing.expect(std.mem.eql(u8, &our_shs, &their_shs));
+
+    const plaintext_in = "Hello, Dear Alice!";
+    const plaintext = try allocator.alloc(u8, plaintext_in.len);
+    @memcpy(plaintext, plaintext_in);
+
+    var bob_enc_data_struct = try encryptDh(plaintext, kp.public_key, kp.secret_key, th.public_key, allocator);
+
+    const bob_enc_data_hex = try bob_enc_data_struct.getHex(allocator, false);
+
+    const alice_enc_data_struct_from_hex = try EncryptedData.initFromHexString(bob_enc_data_hex, allocator);
+
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &bob_enc_data_struct.our_public_key,
+        &alice_enc_data_struct_from_hex.our_public_key,
+    ));
+
+    try std.testing.expect(std.mem.eql(
+        u8,
+        bob_enc_data_struct.aes_enc_data.aad_text,
+        alice_enc_data_struct_from_hex.aes_enc_data.aad_text,
+    ));
+
+    try std.testing.expect(std.mem.eql(
+        u8,
+        bob_enc_data_struct.aes_enc_data.ciphertext,
+        alice_enc_data_struct_from_hex.aes_enc_data.ciphertext,
+    ));
+
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &bob_enc_data_struct.aes_enc_data.nonce,
+        &alice_enc_data_struct_from_hex.aes_enc_data.nonce,
+    ));
+
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &bob_enc_data_struct.aes_enc_data.salt,
+        &alice_enc_data_struct_from_hex.aes_enc_data.salt,
+    ));
+
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &bob_enc_data_struct.aes_enc_data.tag,
+        &alice_enc_data_struct_from_hex.aes_enc_data.tag,
+    ));
+
+    const alice_plain_text = try decryptDh(alice_enc_data_struct_from_hex, th.secret_key, allocator);
+
+    std.debug.print("\nAlice's plain text: {s}\n\n", .{alice_plain_text});
+    try std.testing.expect(std.mem.eql(
+        u8,
+        alice_plain_text,
+        plaintext,
+    ));
+}
+
 test "our and their shared keys are identical" {
+    const allocator = std.heap.page_allocator;
+
     std.debug.print("\n... Generating Diffie-Hellman's key pair for 'us' and for 'them'... - TODO\n\n", .{});
     const kp = try makeKeyPair();
     const th = try makeKeyPair();
@@ -285,7 +343,6 @@ test "our and their shared keys are identical" {
 
     try std.testing.expect(std.mem.eql(u8, &our_shs, &their_shs));
 
-    const allocator = std.heap.page_allocator;
     const plaintext = try allocator.alloc(u8, 10);
     _ = try std.fmt.bufPrint(plaintext, "1234567890", .{});
 
@@ -294,23 +351,24 @@ test "our and their shared keys are identical" {
         our_shs,
         kp.public_key,
         kp.public_key,
+        default_aad_text,
         allocator,
     );
 
     defer allocator.free(plaintext);
-    defer allocator.free(enc_data.ciphertext);
+    defer allocator.free(enc_data.aes_enc_data.ciphertext);
     std.debug.print("\n\nCIPHER: {s}\nSALT: {s}\nNONCE: {s}\nTAG: {s}\n" ++
         "OUR PUB KEY: {s}\nOUR NEXT PUB KEY: {s}\n\n ", .{
-        std.fmt.fmtSliceHexUpper(enc_data.ciphertext),
-        std.fmt.fmtSliceHexUpper(&enc_data.salt),
-        std.fmt.fmtSliceHexUpper(&enc_data.nonce),
-        std.fmt.fmtSliceHexUpper(&enc_data.tag),
+        std.fmt.fmtSliceHexUpper(enc_data.aes_enc_data.ciphertext),
+        std.fmt.fmtSliceHexUpper(&enc_data.aes_enc_data.salt),
+        std.fmt.fmtSliceHexUpper(&enc_data.aes_enc_data.nonce),
+        std.fmt.fmtSliceHexUpper(&enc_data.aes_enc_data.tag),
         std.fmt.fmtSliceHexUpper(&enc_data.our_public_key),
         std.fmt.fmtSliceHexUpper(&enc_data.our_next_public_key),
     });
-}
 
-// pub fn makePrivateKey(out_buf: []u8) !void{
-//     const allocator = std.heap.page_allocator;
-// const sender_public_key = std.crypto.dh.X25519.publicKey(sender_private_key);
-// }
+    const plaintext_again = try decryptUsingSharedSecret(enc_data, our_shs, allocator);
+    std.debug.print("\n\nDECIPHERED TEXT: {s}", .{plaintext_again});
+
+    try std.testing.expect(std.mem.eql(u8, plaintext, plaintext_again));
+}

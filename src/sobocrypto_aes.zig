@@ -8,6 +8,8 @@ const common = @import("sobocrypto_common.zig");
 const sobocrypto_pks = @import("sobocrypto_aes_pks.zig");
 const makeRandomKey = common.basic_crypto_randoms.slice_based.makeRandomKey;
 const makeNonce = common.basic_crypto_randoms.slice_based.makeNonce;
+const makeSalt = common.basic_crypto_randoms.array_based.makeSalt;
+const default_aad_text = "alfa beta gamma";
 
 // ------ public constants and structs -------
 pub const SizesAesGcm = struct {
@@ -23,31 +25,169 @@ pub const AesEncryptedData = struct {
     nonce: [SizesAesGcm.nonce]u8,
     ciphertext: []u8,
     tag: [SizesAesGcm.aes_tag]u8,
+    aad_text: []const u8,
 };
 
+pub const AesEncryptedDataAndKey = struct {
+    aes_key: [SizesAesGcm.aes_key]u8,
+    aes_enc_data: AesEncryptedData,
+};
+
+pub fn convertAesKeyToHex(aes_key: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    const key_hex = try hexed.bytesToHexAlloc(aes_key, std.fmt.Case.upper, allocator);
+    return key_hex;
+}
+
 // ------ public functions -------
+pub fn convertAesEncryptedDataToHex(
+    aes_enc_data: AesEncryptedData,
+    allocator: std.mem.Allocator,
+) ![]u8 {
+    var xargs = std.ArrayList(u8).init(allocator);
 
-pub fn aesGcmEncrypt(
-    output_ciphertext: []u8,
-    output_aes_gcm_tag: *[16]u8,
+    // AES-GCM
+    const cipher_hex = try hexed.bytesToHexAlloc(aes_enc_data.ciphertext, std.fmt.Case.upper, allocator);
+    const tag_hex = try hexed.bytesToHexAlloc(aes_enc_data.tag, std.fmt.Case.upper, allocator);
+    const aad_text_hex = try hexed.bytesToHexAlloc(aes_enc_data.aad_text, std.fmt.Case.upper, allocator);
+    const salt_hex = try hexed.bytesToHexAlloc(aes_enc_data.salt, std.fmt.Case.upper, allocator);
+    const nonce_hex = try hexed.bytesToHexAlloc(aes_enc_data.nonce, std.fmt.Case.upper, allocator);
+
+    defer allocator.free(cipher_hex);
+    defer allocator.free(tag_hex);
+    defer allocator.free(aad_text_hex);
+    defer allocator.free(salt_hex);
+    defer allocator.free(nonce_hex);
+
+    // S + cipher_hex + H + tag_hex + H + aad_text_hex + H + salt_hex + H + nonce_hex + S
+    try xargs.append('S');
+    try xargs.appendSlice(cipher_hex);
+    try xargs.append('H');
+    try xargs.appendSlice(tag_hex);
+    try xargs.append('H');
+    try xargs.appendSlice(aad_text_hex);
+    try xargs.append('H');
+    try xargs.appendSlice(salt_hex);
+    try xargs.append('H');
+    try xargs.appendSlice(nonce_hex);
+    try xargs.append('S');
+
+    // std.debug.print("\nXARGS ITEMS : {s}", .{xargs.items});
+    const res = xargs.toOwnedSlice();
+    return res;
+}
+
+pub fn convertHexToAesEncryptedData(buf_hex: []const u8, allocator: std.mem.Allocator) !AesEncryptedData {
+    if (!std.mem.startsWith(u8, buf_hex, "S") or
+        !std.mem.endsWith(u8, buf_hex, "S"))
+    {
+        return error.InvalidEncryptedDataHexFormat;
+    }
+
+    const buf_hex_trimmed = std.mem.trim(u8, buf_hex, "S");
+    if (buf_hex_trimmed.len != buf_hex.len - 2) {
+        return error.InvalidEncryptedDataHexFormat;
+    }
+
+    var xargs = std.ArrayList([]u8).init(allocator);
+    var it = std.mem.splitScalar(u8, buf_hex_trimmed, 'H');
+    const it_first_bytes = try hexed.hexToBytesAlloc(it.first(), allocator);
+
+    try xargs.append(it_first_bytes);
+
+    var i: u8 = 0;
+    while (it.next()) |val| {
+        const it_bytes = try hexed.hexToBytesAlloc(val, allocator);
+        try xargs.append(it_bytes);
+        i += 1;
+    }
+
+    if (xargs.items.len != 5) {
+        return error.InvalidAesEncryptedDataHexFormat;
+    }
+
+    // S + cipher_hex + H + tag_hex + H + aad_text + H + salt_hex + H + nonce_hex + S
+    const res: AesEncryptedData = .{
+        // AES-GCM
+        .ciphertext = xargs.items[0][0..xargs.items[0].len],
+        .tag = xargs.items[1][0..SizesAesGcm.aes_tag].*,
+        .aad_text = xargs.items[2],
+        .salt = xargs.items[3][0..SizesAesGcm.salt].*,
+        .nonce = xargs.items[4][0..SizesAesGcm.nonce].*,
+    };
+
+    xargs.clearAndFree();
+    xargs.deinit();
+
+    return res;
+}
+
+pub fn aesGcmWholeEncryptProcess(
     input_plaintext: []const u8,
-    cipher_key: []const u8,
-    nonce: []const u8,
+    allocator: std.mem.Allocator,
+) !AesEncryptedDataAndKey {
+    const salt: [SizesAesGcm.salt]u8 = try makeSalt(SizesAesGcm.salt);
+    const nonce: [SizesAesGcm.nonce]u8 = try common.basic_crypto_randoms.array_based.makeNonce(SizesAesGcm.nonce);
+    const aes_key: [SizesAesGcm.aes_key]u8 = try common.basic_crypto_randoms.array_based.makeRandomKey(SizesAesGcm.aes_key);
+    const aad_text = default_aad_text;
+
+    const aes_enc_data = try aesGcmEncryptToStruct(
+        input_plaintext,
+        aes_key,
+        nonce,
+        aad_text,
+        salt,
+        allocator,
+    );
+
+    return .{
+        .aes_enc_data = aes_enc_data,
+        .aes_key = aes_key,
+    };
+}
+
+pub fn aesGcmEncryptToStruct(
+    input_plaintext: []const u8,
+    aes_key: [SizesAesGcm.aes_key]u8,
+    nonce: [SizesAesGcm.nonce]u8,
     aad_text: []const u8,
-    nonce_size_bytes: comptime_int,
-    cipher_key_size_bytes: comptime_int,
-) !void {
-    if (cipher_key.len != cipher_key_size_bytes) return error.InvalidKeyLength;
-    if (nonce.len != nonce_size_bytes) return error.InvalidNonceLength;
-    if (output_ciphertext.len != input_plaintext.len) return error.InvalidCiphertextLength;
+    salt: [SizesAesGcm.salt]u8,
+    allocator: std.mem.Allocator,
+) !AesEncryptedData {
+    const output_ciphertext: []u8 = try allocator.alloc(u8, input_plaintext.len);
+    var output_aes_gcm_tag: [SizesAesGcm.aes_tag]u8 = undefined; // GCM tag
 
-    var nonce_out: [nonce_size_bytes]u8 = nonce[0..nonce_size_bytes].*;
-    var cipher_key_out: [cipher_key_size_bytes]u8 = cipher_key[0..cipher_key_size_bytes].*;
+    std.crypto.aead.aes_gcm.Aes256Gcm.encrypt(
+        output_ciphertext,
+        &output_aes_gcm_tag,
+        input_plaintext,
+        aad_text,
+        nonce,
+        aes_key,
+    );
 
-    if (!std.mem.eql(u8, nonce, &nonce_out)) return error.InvalidNonceCopy;
-    if (!std.mem.eql(u8, cipher_key, &cipher_key_out)) return error.InvalidCipherKeyCopy;
+    return .{
+        .salt = salt,
+        .nonce = nonce,
+        .ciphertext = output_ciphertext,
+        .tag = output_aes_gcm_tag,
+        .aad_text = aad_text,
+    };
+}
 
-    std.crypto.aead.aes_gcm.Aes256Gcm.encrypt(output_ciphertext, output_aes_gcm_tag, input_plaintext, aad_text, nonce_out, cipher_key_out);
+pub fn aesGcmDecryptFromStruct(aes_enc_data: AesEncryptedData, aes_key: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    const output_plain_text = try allocator.alloc(u8, aes_enc_data.ciphertext.len);
+    const aes_key_out: [SizesAesGcm.aes_key]u8 = aes_key[0..SizesAesGcm.aes_key].*;
+
+    try std.crypto.aead.aes_gcm.Aes256Gcm.decrypt(
+        output_plain_text,
+        aes_enc_data.ciphertext,
+        aes_enc_data.tag,
+        aes_enc_data.aad_text,
+        aes_enc_data.nonce,
+        aes_key_out,
+    );
+
+    return output_plain_text;
 }
 
 pub fn aesGcmDecrypt(
@@ -57,11 +197,9 @@ pub fn aesGcmDecrypt(
     input_aes_gcm_tag: [16]u8,
     input_nonce: []const u8,
     aad_text: []const u8,
-    nonce_size_bytes: comptime_int,
-    cipher_key_size_bytes: comptime_int,
 ) !void {
-    const nonce_out: [nonce_size_bytes]u8 = input_nonce[0..nonce_size_bytes].*;
-    const cipher_key_out: [cipher_key_size_bytes]u8 = input_cipher_key[0..cipher_key_size_bytes].*;
+    const nonce_out: [SizesAesGcm.nonce]u8 = input_nonce[0..SizesAesGcm.nonce].*;
+    const cipher_key_out: [SizesAesGcm.aes_key]u8 = input_cipher_key[0..SizesAesGcm.aes_key].*;
 
     return std.crypto.aead.aes_gcm.Aes256Gcm.decrypt(
         output_plain_text,
@@ -74,14 +212,40 @@ pub fn aesGcmDecrypt(
 }
 
 // ======================================== HEX interface =======================================================
+
+pub fn aesGcmEncrypt(
+    output_ciphertext: []u8,
+    output_aes_gcm_tag: *[16]u8,
+    input_plaintext: []const u8,
+    cipher_key: []const u8,
+    nonce: []const u8,
+    aad_text: []const u8,
+) !void {
+    if (cipher_key.len != SizesAesGcm.aes_key) return error.InvalidKeyLength;
+    if (nonce.len != SizesAesGcm.nonce) return error.InvalidNonceLength;
+    if (output_ciphertext.len != input_plaintext.len) return error.InvalidCiphertextLength;
+
+    var nonce_out: [SizesAesGcm.nonce]u8 = nonce[0..SizesAesGcm.nonce].*;
+    var cipher_key_out: [SizesAesGcm.aes_key]u8 = cipher_key[0..SizesAesGcm.aes_key].*;
+
+    if (!std.mem.eql(u8, nonce, &nonce_out)) return error.InvalidNonceCopy;
+    if (!std.mem.eql(u8, cipher_key, &cipher_key_out)) return error.InvalidCipherKeyCopy;
+
+    std.crypto.aead.aes_gcm.Aes256Gcm.encrypt(
+        output_ciphertext,
+        output_aes_gcm_tag,
+        input_plaintext,
+        aad_text,
+        nonce_out,
+        cipher_key_out,
+    );
+}
+
 pub fn aesGcmDecryptFromHex(
     decrypted_text: []u8,
     ciphertext_hex: []u8,
     hex_key_suite: []u8,
 ) !void {
-    const key_size_bytes: comptime_int = sobocrypto_pks.PortableKeySuite.key_size_bytes;
-    const nonce_size_bytes: comptime_int = sobocrypto_pks.PortableKeySuite.nonce_size_bytes;
-
     if (ciphertext_hex.len % 2 != 0) {
         return error.InvalidCiphertextLength;
     }
@@ -93,7 +257,7 @@ pub fn aesGcmDecryptFromHex(
     const pks_struct = try sobocrypto_pks.PortableKeySuite.initFromHexString(hex_key_suite);
     const tag_buf_out: [16]u8 = pks_struct.tag_buf_in[0..16].*;
 
-    return aesGcmDecrypt(decrypted_text, ciphertext_bytes, pks_struct.key_buf_in, tag_buf_out, pks_struct.nonce_buf_in, pks_struct.aad_buf_in, nonce_size_bytes, key_size_bytes);
+    return aesGcmDecrypt(decrypted_text, ciphertext_bytes, pks_struct.key_buf_in, tag_buf_out, pks_struct.nonce_buf_in, pks_struct.aad_buf_in);
 }
 
 pub fn aesGcmEncryptToHex(
@@ -140,6 +304,7 @@ pub fn aesGcmEncryptToHex(
 
     try hexed.bytesToHex(output_ciphertext_hex, buf_ciphertext, std.fmt.Case.upper);
 }
+
 // ======================================== /HEX interface =======================================================
 
 // ======================================= tests =====================================
@@ -219,8 +384,6 @@ test "encryption and decryption process" {
         buf_key_2,
         nonce_2,
         aad_text,
-        nonce_size_bytes,
-        key_size_bytes,
     );
 
     const buf_key_3_error = try allocator.alloc(u8, key_size_bytes + 5);
@@ -233,8 +396,6 @@ test "encryption and decryption process" {
         buf_key_3_error,
         nonce_2,
         aad_text,
-        nonce_size_bytes,
-        key_size_bytes,
     ));
 
     try std.testing.expectError(error.InvalidCiphertextLength, aesGcmEncrypt(
@@ -244,8 +405,6 @@ test "encryption and decryption process" {
         buf_key_2,
         nonce_2,
         aad_text,
-        nonce_size_bytes,
-        key_size_bytes,
     ));
 
     try aesGcmDecrypt(
@@ -255,8 +414,6 @@ test "encryption and decryption process" {
         aes_gcm_tag,
         nonce_2,
         aad_text,
-        nonce_size_bytes,
-        key_size_bytes,
     );
     std.debug.print("\n====> encrypted text: {any}\n--> ENC. TEXT HEX:{s}\nTAG: {any}\n-->TAG HASH: {s} \n\n", .{ encrypted_text, std.fmt.fmtSliceHexUpper(encrypted_text), aes_gcm_tag, std.fmt.fmtSliceHexUpper(
         &aes_gcm_tag,

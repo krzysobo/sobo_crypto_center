@@ -10,31 +10,42 @@ const sobocrypto_dh = @import("sobocrypto_dh.zig");
 const hexed = @import("hexed.zig");
 const DhKeyPair = std.crypto.dh.X25519.KeyPair;
 
-pub fn encryptAesGcm(plain_text: []u8) !void {
+pub fn encryptAesGcm(plaintext: []u8) !void {
     const allocator = std.heap.page_allocator;
 
-    std.debug.print("\n... Starting encryption of text:\n'{s}'\n...\n", .{plain_text});
+    std.debug.print("\n... Starting AES-GCM encryption of text:\n'{s}'\n...\n", .{plaintext});
 
-    const encrypted_text: []u8 = try allocator.alloc(u8, plain_text.len * 2);
-    const buf_portable_key_hex: []u8 = try allocator.alloc(u8, pks.PortableKeySuite.getHexStringKeySizeConst());
+    const res = try sobocrypto_aes.aesGcmWholeEncryptProcess(plaintext, allocator);
 
-    try sobocrypto_aes.aesGcmEncryptToHex(encrypted_text, buf_portable_key_hex, plain_text);
+    const enc_data_hex = try sobocrypto_aes.convertAesEncryptedDataToHex(res.aes_enc_data, allocator);
+    const key_hex = try sobocrypto_aes.convertAesKeyToHex(&res.aes_key, allocator);
+    defer allocator.free(enc_data_hex);
+    defer allocator.free(key_hex);
 
-    defer allocator.free(encrypted_text);
-    defer allocator.free(buf_portable_key_hex);
-    std.debug.print("ENCRYPTED TEXT:\n{s}\nPortable Key Suite:\n{s}\n\n", .{ encrypted_text, buf_portable_key_hex });
+    std.debug.print("ENCRYPTED DATA:\n{s}\nAES KEY:\n{s}\n\n", .{ enc_data_hex, key_hex });
 }
 
-pub fn decryptAesGcm(ciphertext_hex: []u8, hex_key_suite: []u8) !void {
+pub fn decryptAesGcm(ciphertext_hex: []u8, hex_key: []u8) !void {
     const allocator = std.heap.page_allocator;
+    // _ = allocator;
 
-    std.debug.print("\n... Starting decryption of ciphertext:\n'{s}'\nwith hex_key_suite:\n'{s}'\n...\n", .{ ciphertext_hex, hex_key_suite });
+    // _ = ciphertext_hex;
+    // _ = hex_key;
+    std.debug.print("\n... Starting decryption of ciphertext:\n'{s}'\nwith hex_key:\n'{s}'\n...\n", .{ ciphertext_hex, hex_key });
 
-    const decrypted_text = try allocator.alloc(u8, ciphertext_hex.len / 2);
-    try sobocrypto_aes.aesGcmDecryptFromHex(decrypted_text, ciphertext_hex, hex_key_suite);
+    const aes_enc_data = try sobocrypto_aes.convertHexToAesEncryptedData(ciphertext_hex, allocator);
 
-    defer allocator.free(decrypted_text);
-    std.debug.print("Decrypted text:\n{s}\n\n========================================\n", .{decrypted_text});
+    const aes_key = try hexed.hexToBytesAlloc(hex_key, allocator);
+    defer allocator.free(aes_key);
+    // _ = aes_enc_data;
+
+    const plaintext = try sobocrypto_aes.aesGcmDecryptFromStruct(
+        aes_enc_data,
+        aes_key,
+        allocator,
+    );
+
+    std.debug.print("Decrypted text:\n{s}\n\n========================================\n", .{plaintext});
 }
 
 pub fn generateDhKeyPair() !void { // TODO
