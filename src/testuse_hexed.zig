@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Krzysztof Sobolewski <krzysztof.sobolewski@gmail.com> https://github.com/krzysobo
+// Repo location: https://github.com/krzysobo/sobo_crypto_center/
+// License: MIT  see: https://github.com/krzysobo/sobo_crypto_center/blob/main/LICENSE
+
 const std = @import("std");
 const hexed = @import("hexed.zig");
 
