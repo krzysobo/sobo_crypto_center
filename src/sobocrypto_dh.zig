@@ -11,14 +11,7 @@ const makeSalt = common.basic_crypto_randoms.array_based.makeSalt;
 const makeNonce = common.basic_crypto_randoms.array_based.makeNonce;
 const X25519 = std.crypto.dh.X25519;
 const DhKeyPair = X25519.KeyPair;
-
-pub const SizesAesGcm = struct {
-    // AES-GCM
-    pub const aes_key: comptime_int = 32;
-    pub const aes_tag: comptime_int = 16;
-    pub const nonce: comptime_int = 12;
-    pub const salt: comptime_int = 32;
-};
+const SizesAesGcm = sobocrypto_aes.SizesAesGcm;
 
 // ------ structs and other data definitions -------
 pub const SizesDh = struct {
@@ -28,16 +21,9 @@ pub const SizesDh = struct {
     pub const dh_shared_secret: comptime_int = X25519.shared_length;
 };
 
-pub const AesEncryptedData = struct {
-    salt: [SizesAesGcm.salt]u8,
-    nonce: [SizesAesGcm.nonce]u8,
-    ciphertext: []u8,
-    tag: [SizesAesGcm.aes_tag]u8,
-};
-
 pub const EncryptedData = struct {
     // AES-GCM
-    aes_enc_data: AesEncryptedData,
+    aes_enc_data: sobocrypto_aes.AesEncryptedData,
 
     // DH
     our_public_key: [SizesDh.dh_public_key]u8,

@@ -9,6 +9,24 @@ const sobocrypto_pks = @import("sobocrypto_aes_pks.zig");
 const makeRandomKey = common.basic_crypto_randoms.slice_based.makeRandomKey;
 const makeNonce = common.basic_crypto_randoms.slice_based.makeNonce;
 
+// ------ public constants and structs -------
+pub const SizesAesGcm = struct {
+    // AES-GCM
+    pub const aes_key: comptime_int = 32;
+    pub const aes_tag: comptime_int = 16;
+    pub const nonce: comptime_int = 12;
+    pub const salt: comptime_int = 32;
+};
+
+pub const AesEncryptedData = struct {
+    salt: [SizesAesGcm.salt]u8,
+    nonce: [SizesAesGcm.nonce]u8,
+    ciphertext: []u8,
+    tag: [SizesAesGcm.aes_tag]u8,
+};
+
+// ------ public functions -------
+
 pub fn aesGcmEncrypt(
     output_ciphertext: []u8,
     output_aes_gcm_tag: *[16]u8,
