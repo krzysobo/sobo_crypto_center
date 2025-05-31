@@ -12,30 +12,36 @@ const makeNonce = common.basic_crypto_randoms.array_based.makeNonce;
 const X25519 = std.crypto.dh.X25519;
 const DhKeyPair = X25519.KeyPair;
 
-// ------ structs and other data definitions -------
-pub const SizesDh = struct {
+pub const SizesAesGcm = struct {
+    // AES-GCM
     pub const aes_key: comptime_int = 32;
+    pub const aes_tag: comptime_int = 16;
     pub const nonce: comptime_int = 12;
     pub const salt: comptime_int = 32;
+};
+
+// ------ structs and other data definitions -------
+pub const SizesDh = struct {
+    // Diffie-Hellman's (DH)
     pub const dh_public_key: comptime_int = X25519.public_length;
     pub const dh_private_key: comptime_int = X25519.secret_length;
     pub const dh_shared_secret: comptime_int = X25519.shared_length;
-    pub const dh_tag: comptime_int = 16;
 };
 
-const AesKeyData = struct {
-    salt: [SizesDh.salt]u8,
-    nonce: [SizesDh.nonce]u8,
-    aes_key: [SizesDh.aes_key]u8,
+pub const AesEncryptedData = struct {
+    salt: [SizesAesGcm.salt]u8,
+    nonce: [SizesAesGcm.nonce]u8,
+    ciphertext: []u8,
+    tag: [SizesAesGcm.aes_tag]u8,
 };
 
 pub const EncryptedData = struct {
-    salt: [SizesDh.salt]u8,
-    nonce: [SizesDh.nonce]u8,
-    ciphertext: []u8,
+    // AES-GCM
+    aes_enc_data: AesEncryptedData,
+
+    // DH
     our_public_key: [SizesDh.dh_public_key]u8,
     our_next_public_key: [SizesDh.dh_public_key]u8,
-    tag: [SizesDh.dh_tag]u8,
 
     pub fn getHex(
         self: *EncryptedData,
@@ -44,10 +50,13 @@ pub const EncryptedData = struct {
     ) ![]u8 {
         var xargs = std.ArrayList(u8).init(allocator);
 
-        const cipher_hex = try hexed.bytesToHexAlloc(self.ciphertext, std.fmt.Case.upper, allocator);
-        const tag_hex = try hexed.bytesToHexAlloc(self.tag, std.fmt.Case.upper, allocator);
-        const salt_hex = try hexed.bytesToHexAlloc(self.salt, std.fmt.Case.upper, allocator);
-        const nonce_hex = try hexed.bytesToHexAlloc(self.nonce, std.fmt.Case.upper, allocator);
+        // AES-GCM
+        const cipher_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.ciphertext, std.fmt.Case.upper, allocator);
+        const tag_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.tag, std.fmt.Case.upper, allocator);
+        const salt_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.salt, std.fmt.Case.upper, allocator);
+        const nonce_hex = try hexed.bytesToHexAlloc(self.aes_enc_data.nonce, std.fmt.Case.upper, allocator);
+
+        // DH
         const our_public_key_hex = try hexed.bytesToHexAlloc(self.our_public_key, std.fmt.Case.upper, allocator);
 
         defer allocator.free(cipher_hex);
@@ -110,10 +119,15 @@ pub const EncryptedData = struct {
         // W + cipher_hex + H + tag_hex + H + salt_hex + H + nonce_hex + H + our_pub_key_hex + W [OR]
         // W + cipher_hex + H + tag_hex + H + salt_hex + H + nonce_hex + H + our_pub_key_hex + H + our_next_pub_key + W
         const res: EncryptedData = .{
-            .ciphertext = xargs.items[0][0..xargs.items[0].len],
-            .tag = xargs.items[1][0..SizesDh.dh_tag].*,
-            .salt = xargs.items[2][0..SizesDh.salt].*,
-            .nonce = xargs.items[3][0..SizesDh.nonce].*,
+            // AES-GCM
+            .aes_enc_data = .{
+                .ciphertext = xargs.items[0][0..xargs.items[0].len],
+                .tag = xargs.items[1][0..SizesAesGcm.aes_tag].*,
+                .salt = xargs.items[2][0..SizesAesGcm.salt].*,
+                .nonce = xargs.items[3][0..SizesAesGcm.nonce].*,
+            },
+
+            // DH
             .our_public_key = xargs.items[4][0..SizesDh.dh_public_key].*,
             .our_next_public_key = if (xargs.items.len == 6)
                 xargs.items[5][0..SizesDh.dh_public_key].*
@@ -136,7 +150,10 @@ pub fn encryptDh(
     their_public_key: [SizesDh.dh_public_key]u8,
     allocator: std.mem.Allocator,
 ) !EncryptedData {
-    const our_shs = try makeSharedSecret(our_secret_key, their_public_key);
+    const our_shs = try makeSharedSecret(
+        our_secret_key,
+        their_public_key,
+    );
 
     const enc_data = encryptUsingSharedSecret(
         plaintext,
@@ -168,15 +185,25 @@ pub fn decryptDh(
     return dec_data;
 }
 
-pub fn encryptUsingSharedSecret(
+pub fn makeKeyPair() !DhKeyPair {
+    const kp = DhKeyPair.generate();
+    return kp;
+}
+
+pub fn makePublicKey(secret_key: [SizesDh.dh_private_key]u8) ![SizesDh.dh_public_key]u8 {
+    return std.crypto.dh.X25519.recoverPublicKey(secret_key);
+}
+
+// ---------- private functions -----------
+fn encryptUsingSharedSecret(
     plaintext: []u8,
     shared_secret: [SizesDh.dh_shared_secret]u8,
     our_public_key: [SizesDh.dh_public_key]u8,
     our_next_public_key: [SizesDh.dh_public_key]u8,
     allocator: std.mem.Allocator,
 ) !EncryptedData {
-    const salt: [SizesDh.salt]u8 = try makeSalt(SizesDh.salt);
-    const nonce: [SizesDh.nonce]u8 = try makeNonce(SizesDh.nonce);
+    const salt: [SizesAesGcm.salt]u8 = try makeSalt(SizesAesGcm.salt);
+    const nonce: [SizesAesGcm.nonce]u8 = try makeNonce(SizesAesGcm.nonce);
     const output_ciphertext = try allocator.alloc(u8, plaintext.len);
     var output_aes_gcm_tag: [16]u8 = undefined;
 
@@ -193,69 +220,67 @@ pub fn encryptUsingSharedSecret(
         &aes_key,
         &nonce,
         "alfa beta gamma",
-        SizesDh.nonce,
-        SizesDh.aes_key,
+        SizesAesGcm.nonce,
+        SizesAesGcm.aes_key,
     );
 
     return .{
-        .salt = salt,
-        .nonce = nonce,
-        .ciphertext = output_ciphertext,
+        .aes_enc_data = .{
+            .salt = salt,
+            .nonce = nonce,
+            .ciphertext = output_ciphertext,
+            .tag = output_aes_gcm_tag,
+        },
+
         .our_public_key = our_public_key,
         .our_next_public_key = our_next_public_key,
-        .tag = output_aes_gcm_tag,
     };
 }
 
-pub fn decryptUsingSharedSecret(
+fn decryptUsingSharedSecret(
     enc_data: EncryptedData,
     shared_secret: [SizesDh.dh_shared_secret]u8,
     allocator: std.mem.Allocator,
 ) ![]u8 {
-    const aes_key = try makeAesKeyFromSharedSecret(shared_secret, enc_data.salt);
-    const output_plain_text: []u8 = try allocator.alloc(u8, enc_data.ciphertext.len);
+    const aes_key = try makeAesKeyFromSharedSecret(
+        shared_secret,
+        enc_data.aes_enc_data.salt,
+    );
+
+    const output_plain_text: []u8 = try allocator.alloc(u8, enc_data.aes_enc_data.ciphertext.len);
     try sobocrypto_aes.aesGcmDecrypt(
         output_plain_text,
-        enc_data.ciphertext,
+        enc_data.aes_enc_data.ciphertext,
         &aes_key,
-        enc_data.tag,
-        &enc_data.nonce,
+        enc_data.aes_enc_data.tag,
+        &enc_data.aes_enc_data.nonce,
         "alfa beta gamma",
-        SizesDh.nonce,
-        SizesDh.aes_key,
+        SizesAesGcm.nonce,
+        SizesAesGcm.aes_key,
     );
 
     return output_plain_text;
 }
 
-pub fn makeKeyPair() !DhKeyPair {
-    const kp = DhKeyPair.generate();
-    return kp;
-}
-
-pub fn makePublicKey(secret_key: [SizesDh.dh_private_key]u8) ![SizesDh.dh_public_key]u8 {
-    return std.crypto.dh.X25519.recoverPublicKey(secret_key);
-}
-
-pub fn makeSharedSecret(
-    my_private_key: [X25519.secret_length]u8,
-    their_public_key: [SizesDh.dh_public_key]u8,
-) ![SizesDh.dh_shared_secret]u8 {
-    const shared_secret = std.crypto.dh.X25519.scalarmult(my_private_key, their_public_key);
-    return shared_secret;
-}
-
-pub fn makeAesKeyFromSharedSecret(
+fn makeAesKeyFromSharedSecret(
     shared_secret: [X25519.shared_length]u8,
-    salt: [SizesDh.salt]u8,
-) ![SizesDh.aes_key]u8 {
-    var aes_key: [SizesDh.aes_key]u8 = undefined;
+    salt: [SizesAesGcm.salt]u8,
+) ![SizesAesGcm.aes_key]u8 {
+    var aes_key: [SizesAesGcm.aes_key]u8 = undefined;
     const hkdf = std.crypto.kdf.hkdf.HkdfSha256;
     // hkdf.expand(&aes_key, &shared_secret, "blah-blah-blah-blah");
     const prk: [hkdf.prk_length]u8 = hkdf.extract(&salt, &shared_secret);
     hkdf.expand(&aes_key, "hybrid-encryption", prk);
 
     return aes_key;
+}
+
+fn makeSharedSecret(
+    my_private_key: [X25519.secret_length]u8,
+    their_public_key: [SizesDh.dh_public_key]u8,
+) ![SizesDh.dh_shared_secret]u8 {
+    const shared_secret = std.crypto.dh.X25519.scalarmult(my_private_key, their_public_key);
+    return shared_secret;
 }
 
 // ============================== tests ====================================
